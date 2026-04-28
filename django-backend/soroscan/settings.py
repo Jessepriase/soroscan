@@ -70,12 +70,14 @@ ENABLE_SILK = env.bool("ENABLE_SILK", default=False)
 MIDDLEWARE = [
     # PrometheusBeforeMiddleware must be first to capture all requests.
     "django_prometheus.middleware.PrometheusBeforeMiddleware",
+    "soroscan.middleware.RequestBodySizeMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "soroscan.middleware.ReverseProxyFixedIPMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "soroscan.middleware.RequestIdMiddleware",
     "soroscan.middleware.SlowQueryMiddleware",
+    "soroscan.middleware.ApiDeprecationMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -206,8 +208,9 @@ SIMPLE_JWT = {
 }
 
 # CORS
+origins_str = env("ALLOWED_ORIGINS", default="")
+CORS_ALLOWED_ORIGINS = [o.strip() for o in origins_str.split(",") if o.strip()] if origins_str else []
 CORS_ALLOW_ALL_ORIGINS = DEBUG
-CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])
 CORS_ALLOW_CREDENTIALS = True  # Required for Apollo Client with credentials: 'include'
 
 # Channels
@@ -278,6 +281,8 @@ CELERY_BEAT_SCHEDULE = {
 # Data Retention Configuration
 # Number of days to retain deduplication logs before cleanup
 DEDUP_LOG_RETENTION_DAYS = env("DEDUP_LOG_RETENTION_DAYS", default=90, cast=int)
+# Number of days to retain contract events before pruning
+EVENT_RETENTION_DAYS = env("EVENT_RETENTION_DAYS", default=30, cast=int)
 
 # Alert deduplication window
 ALERT_DEDUP_WINDOW_SECONDS = env.int("ALERT_DEDUP_WINDOW_SECONDS", default=300)
@@ -453,3 +458,15 @@ if SENTRY_DSN:
         send_default_pii=False,
         environment=env("SENTRY_ENVIRONMENT", default="production"),
     )
+
+# --- Request Size Limit (Issue #338) ---
+# Default to 10MB (10 * 1024 * 1024 bytes)
+MAX_REQUEST_BODY_SIZE = env.int("MAX_REQUEST_BODY_SIZE", default=10485760)
+
+# --- API Deprecation (Issue #336) ---
+DEPRECATED_ENDPOINTS = {
+    "/api/audit-trail/": {
+        "sunset": "2026-12-31",
+        "replacement": "/graphql/"
+    }
+}
