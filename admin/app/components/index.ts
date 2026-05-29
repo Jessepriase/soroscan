@@ -12,3 +12,6 @@ export type { ProgressBarProps } from './ProgressBar';
 
 export { default as Badge } from './Badge';
 export type { BadgeProps } from './Badge';
+
+export { default as CopyEventLink, buildEventUrl } from './CopyEventLink';
+export type { CopyEventLinkProps } from './CopyEventLink';
