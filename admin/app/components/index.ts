@@ -13,5 +13,5 @@ export type { ProgressBarProps } from './ProgressBar';
 export { default as Badge } from './Badge';
 export type { BadgeProps } from './Badge';
 
-export { default as TooltipInfoIcon } from './TooltipInfoIcon';
-export type { TooltipInfoIconProps } from './TooltipInfoIcon';
+export { default as ExportProgressModal } from './ExportProgressModal';
+export type { ExportProgressModalProps, ExportStatus } from './ExportProgressModal';
