@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { EventTable } from "./EventTable";
 import { FilterBar } from "./FilterBar";
 import { EventDetailModal } from "./EventDetailModal";
@@ -12,6 +12,8 @@ import styles from "@/components/ingest/ingest-terminal.module.css";
 import { useToast } from "@/context/ToastContext";
 import { parseSearchQuery, matchesFilters } from "@/lib/search-parser";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { useContractEventSubscription } from "@/src/hooks/useContractEventSubscription";
+import { SubscriptionStatusBadge } from "@/components/ui/SubscriptionStatusBadge";
 
 const PAGE_SIZE = 20;
 
@@ -52,6 +54,9 @@ export function EventExplorerDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<EventRecord | null>(null);
   const [totalCount, setTotalCount] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+  const [newEventsCount, setNewEventsCount] = useState(0);
+  const previousEventsRef = useRef<EventRecord[]>([]);
 
   useEffect(() => {
     try {
@@ -134,6 +139,74 @@ export function EventExplorerDashboard() {
 
     loadEvents();
   }, [filters.contractId, filters.eventType, filters.since, filters.until, currentPage]);
+
+  // Subscribe to real-time events
+  const { events: realTimeEvents, connectionState } = useContractEventSubscription({
+    contractId: filters.contractId || "",
+    maxEvents: 10,
+  });
+
+  // Track new events
+  useEffect(() => {
+    const previousIds = new Set(previousEventsRef.current.map(e => e.id));
+    let count = 0;
+    events.forEach(event => {
+      if (!previousIds.has(event.id)) {
+        count++;
+      }
+    });
+
+    if (count > 0) {
+      if (isPaused) {
+        setNewEventsCount(prev => prev + count);
+      } else {
+        setNewEventsCount(0);
+      }
+    }
+
+    previousEventsRef.current = events;
+  }, [events, isPaused]);
+
+  // Show notification toast for matching events
+  useEffect(() => {
+    if (realTimeEvents.length > 0 && !isPaused) {
+      const newEvent = realTimeEvents[0];
+      // Check if new event matches current filters
+      const mockEventRecord: EventRecord = {
+        id: newEvent.id,
+        contractId: filters.contractId || "",
+        contractName: "",
+        eventType: newEvent.eventType,
+        ledger: newEvent.ledgerSequence,
+        eventIndex: 0,
+        timestamp: newEvent.timestamp,
+        txHash: "",
+        payload: newEvent.payload,
+      };
+      
+      const parsedQuery = parseSearchQuery(filters.searchQuery);
+      if (matchesFilters(mockEventRecord, parsedQuery)) {
+        showToast(`New ${newEvent.eventType} event!`, "info", "New Event");
+      }
+
+      // Refresh events when new event comes in
+      if (currentPage === 1) {
+        fetchExplorerEvents({
+          contractId: filters.contractId,
+          eventType: filters.eventType || null,
+          limit: PAGE_SIZE + 1,
+          offset: 0,
+          since: filters.since || null,
+          until: filters.until || null,
+        }).then(result => {
+          const nextExists = result.length > PAGE_SIZE;
+          const visibleEvents = nextExists ? result.slice(0, PAGE_SIZE) : result;
+          setEvents(visibleEvents);
+          setHasNext(nextExists);
+        });
+      }
+    }
+  }, [realTimeEvents, isPaused]);
 
   // Apply search filter client-side
   useEffect(() => {
@@ -307,12 +380,42 @@ export function EventExplorerDashboard() {
 
         <section className={styles.timelinePanel} aria-label="Events table">
           <div className={styles.panelHead}>
-            <h2 className={styles.sectionTitle}>Contract Events</h2>
-            <p className={styles.summary}>
-              {loading
-                ? "Loading..."
-                : `Showing ${startIndex}-${endIndex} of ${totalCount}+`}
-            </p>
+            <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+              <h2 className={styles.sectionTitle}>Contract Events</h2>
+              <SubscriptionStatusBadge connectionState={connectionState} />
+              {newEventsCount > 0 && (
+                <button
+                  type="button"
+                  className={styles.btn}
+                  style={{
+                    backgroundColor: "rgba(0, 255, 156, 0.2)",
+                    borderColor: "rgba(0, 255, 156, 0.6)",
+                  }}
+                  onClick={() => setNewEventsCount(0)}
+                >
+                  {newEventsCount} new event{newEventsCount !== 1 ? "s" : ""}
+                </button>
+              )}
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+              <p className={styles.summary}>
+                {loading
+                  ? "Loading..."
+                  : `Showing ${startIndex}-${endIndex} of ${totalCount}+`}
+              </p>
+              <button
+                type="button"
+                className={styles.btn}
+                onClick={() => {
+                  setIsPaused(prev => !prev);
+                  if (isPaused) {
+                    setNewEventsCount(0);
+                  }
+                }}
+              >
+                {isPaused ? "▶ Resume" : "⏸ Pause"}
+              </button>
+            </div>
           </div>
 
           {error && (
