@@ -1,5 +1,7 @@
 export { SoroScanClient, SoroScanError, Paginator } from "./client.js";
+export { EventQueryBuilder, ContractQueryBuilder } from "./builder.js";
 export { verifyWebhookSignature } from "./webhookVerification.js";
+export { WebSocketClient } from "./websocket-client.js";
 export type {
   // Config
   SoroScanClientConfig,
@@ -17,6 +19,10 @@ export type {
   ContractEvent,
   GetEventsParams,
   GetEventsResponse,
+  GetEventsByContractsParams,
+  GetEventsByContractsResponse,
+  RecordStructuredEventParams,
+  RecordStructuredEventResponse,
   // Contracts
   ContractType,
   ContractSpec,
@@ -47,6 +53,19 @@ export type {
   SubscribeWebhookParams,
   UpdateWebhookParams,
   WebhookListResponse,
+  // SC-17: Contract event type info
+  ContractEventTypeInfo,
+  // SC-29: Batch event recording
+  EventEntry,
+  RecordEventsBatchParams,
+  RecordEventsBatchResponse,
+  // WebSocket
+  WebSocketClientConfig,
+  EventCallback,
+  ConnectionCallback,
+  ErrorCallback,
+  ReconnectingCallback,
+  EventFilter,
   // Errors
   SoroScanApiError,
 } from "./types.js";

@@ -1,8 +1,13 @@
 import type {
   SoroScanClientConfig,
   SoroScanApiError,
+  ContractEventTypeInfo,
   GetEventsParams,
   GetEventsResponse,
+  GetEventsByContractsParams,
+  GetEventsByContractsResponse,
+  RecordStructuredEventParams,
+  RecordStructuredEventResponse,
   GetContractsParams,
   GetContractsResponse,
   GetContractParams,
@@ -18,7 +23,10 @@ import type {
   Webhook,
   WebhookListResponse,
   PaginatedResponse,
+  RecordEventsBatchParams,
+  RecordEventsBatchResponse,
 } from "./types.js";
+import { EventQueryBuilder, ContractQueryBuilder } from "./builder.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Error class
@@ -132,6 +140,38 @@ export class SoroScanClient {
     return json as T;
   }
 
+  // ─── Builder factories (SC-10) ────────────────────────────────────────────
+
+  /**
+   * Create a fluent event query builder (SC-10).
+   *
+   * @example
+   * const result = await client
+   *   .events()
+   *   .filterByContract("CCAAA...")
+   *   .filterByEventType("transfer")
+   *   .filterByLedgerRange(1_000, 2_000)
+   *   .execute();
+   */
+  events(): EventQueryBuilder {
+    return new EventQueryBuilder(this);
+  }
+
+  /**
+   * Create a fluent contract query builder (SC-10).
+   *
+   * @example
+   * const result = await client
+   *   .contracts()
+   *   .filterByType("token")
+   *   .filterByVerified(true)
+   *   .search("my-token")
+   *   .execute();
+   */
+  contracts(): ContractQueryBuilder {
+    return new ContractQueryBuilder(this);
+  }
+
   // ─── Events ────────────────────────────────────────────────────────────────
 
   /**
@@ -145,6 +185,44 @@ export class SoroScanClient {
     return this.#request<GetEventsResponse>("GET", "/v1/events", {
       query: params as Record<string, unknown>,
     });
+  }
+
+  /** Fetch events for several contracts with one indexed query. */
+  async getEventsByContracts(
+    params: GetEventsByContractsParams
+  ): Promise<GetEventsByContractsResponse> {
+    return this.#request<GetEventsByContractsResponse>("POST", "/v1/events/by-contracts", {
+      body: params,
+    });
+  }
+
+  /**
+   * Submit an SC-38 structured event. The correlation ID makes retry handling
+   * explicit: the contract rejects a repeated ID without publishing twice.
+   */
+  async recordStructuredEvent(
+    params: RecordStructuredEventParams
+  ): Promise<RecordStructuredEventResponse> {
+    const response = await this.#request<{
+      status: "submitted" | "failed";
+      tx_hash?: string;
+      transaction_status: string;
+      error?: string;
+    }>("POST", "/api/record/structured/", {
+      body: {
+        contract_id: params.contractId,
+        event_type: params.eventType,
+        payload_hash: params.payloadHash,
+        schema_version: params.schemaVersion,
+        correlation_id: params.correlationId,
+      },
+    });
+    return {
+      status: response.status,
+      txHash: response.tx_hash,
+      transactionStatus: response.transaction_status,
+      error: response.error,
+    };
   }
 
   // ─── Contracts ─────────────────────────────────────────────────────────────
@@ -174,6 +252,24 @@ export class SoroScanClient {
     return this.#request<Contract>(
       "GET",
       `/v1/contracts/${encodeURIComponent(contractId)}`
+    );
+  }
+
+  /**
+   * Get event types and their counts for a specific contract (SC-17).
+   *
+   * @example
+   * const types = await client.getContractEventTypes('CCAAA...');
+   * for (const t of types) {
+   *   console.log(t.eventType, t.count);
+   * }
+   */
+  async getContractEventTypes(
+    contractId: string
+  ): Promise<ContractEventTypeInfo[]> {
+    return this.#request<ContractEventTypeInfo[]>(
+      "GET",
+      `/v1/contracts/${encodeURIComponent(contractId)}/event-types`
     );
   }
 
@@ -232,6 +328,29 @@ export class SoroScanClient {
   }
 
   // ─── Webhooks ──────────────────────────────────────────────────────────────
+
+  /**
+   * Record multiple events in a single transaction (SC-29).
+   * Maximum 25 events per batch.
+   *
+   * @example
+   * const result = await client.recordEventsBatch({
+   *   events: [
+   *     { contractId: 'CCAAA...', eventType: 'transfer', payloadHash: 'abc...' },
+   *     { contractId: 'CCAAA...', eventType: 'swap', payloadHash: 'def...' },
+   *   ],
+   * });
+   * console.log('Total events:', result.totalEvents);
+   */
+  async recordEventsBatch(
+    params: RecordEventsBatchParams
+  ): Promise<RecordEventsBatchResponse> {
+    return this.#request<RecordEventsBatchResponse>(
+      "POST",
+      "/v1/record-events-batch",
+      { body: params }
+    );
+  }
 
   /**
    * Create a new webhook subscription.
