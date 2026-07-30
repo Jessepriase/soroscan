@@ -19,10 +19,14 @@ from soroscan.exceptions import (
 )
 from soroscan.models import (
     ContractEvent,
+    ContractEventTypeInfo,
     ContractStats,
+    EventEntry,
     PaginatedResponse,
     RecordEventRequest,
     RecordEventResponse,
+    RecordEventsBatchRequest,
+    RecordEventsBatchResponse,
     TrackedContract,
     WebhookSubscription,
 )
@@ -299,6 +303,21 @@ class SoroScanClient:
         data = self._handle_response(response)
         return ContractStats.model_validate(data)
 
+    def get_contract_event_types(self, contract_id: str) -> list[ContractEventTypeInfo]:
+        """
+        Get event types and their counts for a specific contract (SC-17).
+
+        Args:
+            contract_id: Contract address (C...)
+
+        Returns:
+            List of event type info with counts and first/last seen timestamps
+        """
+        url = urljoin(self.base_url, f"/api/contracts/{contract_id}/event-types/")
+        response = self._client.get(url, headers=self._get_headers())
+        data = self._handle_response(response)
+        return [ContractEventTypeInfo.model_validate(item) for item in data]
+
     def get_events(
         self,
         contract_id: str | None = None,
@@ -394,6 +413,28 @@ class SoroScanClient:
         response = self._client.post(url, headers=self._get_headers(), json=request.model_dump())
         data = self._handle_response(response)
         return RecordEventResponse.model_validate(data)
+
+    def record_events_batch(
+        self,
+        events: list[EventEntry],
+    ) -> RecordEventsBatchResponse:
+        """
+        Record multiple events in a single transaction (SC-29).
+        Maximum 25 events per batch.
+
+        Args:
+            events: List of EventEntry objects (1–25 entries)
+
+        Returns:
+            Batch submission result including new total event count
+        """
+        url = urljoin(self.base_url, "/api/record-events-batch/")
+        request = RecordEventsBatchRequest(events=events)
+        response = self._client.post(
+            url, headers=self._get_headers(), json=request.model_dump()
+        )
+        data = self._handle_response(response)
+        return RecordEventsBatchResponse.model_validate(data)
 
     def get_webhooks(
         self,
@@ -784,6 +825,21 @@ class AsyncSoroScanClient:
         data = self._handle_response(response)
         return ContractStats.model_validate(data)
 
+    async def get_contract_event_types(self, contract_id: str) -> list[ContractEventTypeInfo]:
+        """
+        Get event types and their counts for a specific contract (SC-17).
+
+        Args:
+            contract_id: Contract address (C...)
+
+        Returns:
+            List of event type info with counts and first/last seen timestamps
+        """
+        url = urljoin(self.base_url, f"/api/contracts/{contract_id}/event-types/")
+        response = await self._client.get(url, headers=self._get_headers())
+        data = self._handle_response(response)
+        return [ContractEventTypeInfo.model_validate(item) for item in data]
+
     async def get_events(
         self,
         contract_id: str | None = None,
@@ -881,6 +937,28 @@ class AsyncSoroScanClient:
         )
         data = self._handle_response(response)
         return RecordEventResponse.model_validate(data)
+
+    async def record_events_batch(
+        self,
+        events: list[EventEntry],
+    ) -> RecordEventsBatchResponse:
+        """
+        Record multiple events in a single transaction (SC-29).
+        Maximum 25 events per batch.
+
+        Args:
+            events: List of EventEntry objects (1–25 entries)
+
+        Returns:
+            Batch submission result including new total event count
+        """
+        url = urljoin(self.base_url, "/api/record-events-batch/")
+        request = RecordEventsBatchRequest(events=events)
+        response = await self._client.post(
+            url, headers=self._get_headers(), json=request.model_dump()
+        )
+        data = self._handle_response(response)
+        return RecordEventsBatchResponse.model_validate(data)
 
     async def get_webhooks(
         self,

@@ -23,13 +23,17 @@ from soroscan.exceptions import (
 from soroscan.webhook_verification import verify_webhook_signature
 from soroscan.models import (
     ContractEvent,
+    ContractEventTypeInfo,
     ContractStats,
+    EventEntry,
     PaginatedResponse,
+    RecordEventsBatchRequest,
+    RecordEventsBatchResponse,
     TrackedContract,
     WebhookSubscription,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "SoroScanClient",
     "AsyncSoroScanClient",
@@ -40,10 +44,14 @@ __all__ = [
     "Paginator",
     "AsyncPaginator",
     "ContractEvent",
+    "ContractEventTypeInfo",
     "TrackedContract",
     "WebhookSubscription",
     "ContractStats",
     "PaginatedResponse",
+    "EventEntry",
+    "RecordEventsBatchRequest",
+    "RecordEventsBatchResponse",
     "SoroScanError",
     "SoroScanAPIError",
     "SoroScanAuthError",
