@@ -10,11 +10,16 @@ building a new feature, we welcome your involvement.
 
 ## 🚀 Quick Links for Contributors
 
-1. 🔰 **Getting Started**: [Developer Onboarding Guide](docs/contributing/developer-onboarding.md) — set up your local environment in under 2 hours.
-2. 🎨 **Code Style & Linting**: [Code Style Guidelines](docs/contributing/style-guide.md) — Python/Django, TypeScript/React, Rust, CSS, SQL.
-3. 🌿 **Git & PR Workflows**: [Git & PR Workflow Guide](docs/contributing/git-and-pr-workflow.md) — branching, Conventional Commits, and code reviews.
-4. 📄 **Writing Documentation**: [Documentation Contribution Guide](docs/contributing/documentation-guide.md) — editing docs and running the Docusaurus preview server.
-5. 🤝 **Community & Code of Conduct**: [Community Standards](docs/contributing/community-standards.md) — issue labelling, triage workflows, and Code of Conduct.
+To make your onboarding process as smooth as possible, we have detailed guidelines for each stage of your contribution journey:
+
+1. 🔰 **Getting Started**: Read the [Developer Onboarding Guide](docs/contributing/developer-onboarding.md) to set up your local environment in under 2 hours.
+2. 🎨 **Code Style & Linting**: Adhere to our [Code Style Guidelines](docs/contributing/style-guide.md) (Python/Django, TypeScript/React, Rust, CSS, SQL).
+3. 🌿 **Git & PR Workflows**: Follow our [Git & PR Workflow Guide](docs/contributing/git-and-pr-workflow.md) to learn about branching, Conventional Commits, and code reviews.
+4. 📄 **Writing Documentation**: Check the [Documentation Contribution Guide](docs/contributing/documentation-guide.md) to learn how to edit docs and run the Docusaurus preview server.
+5. 🤝 **Community & Code of Conduct**: Read our [Community Standards](docs/contributing/community-standards.md) to understand our issue labeling, triage workflows, and Code of Conduct.
+6. 📝 **Logging Standards**: Follow our [Logging Standards](docs/contributing/LOGGING_STANDARDS.md) for structured logging formats, field naming conventions, log levels, and sensitive data masking.
+7. 🏛️ **Architecture Decisions**: Review our [Architecture Decision Records (ADRs)](docs/adrs/README.md) to understand the rationale behind major technical choices.
+
 
 ---
 
