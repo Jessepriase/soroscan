@@ -257,6 +257,112 @@ Mutations require a valid JWT token in the Authorization header. Unauthenticated
 
 - `ws://host/ws/events/<contract_id>/` - Real-time event streaming
 
+## Rate Limiting & Throttle Policies
+
+SoroScan enforces rate limits at multiple layers to protect the API from abuse and ensure fair usage.
+
+### Rate Limit Headers (IETF Draft Standard)
+
+All responses include standardized rate limit headers following the [IETF draft](https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/):
+
+| Header | Description |
+|--------|-------------|
+| `RateLimit-Limit` | Maximum requests allowed in the current window |
+| `RateLimit-Remaining` | Requests remaining in the current window |
+| `RateLimit-Reset` | Unix timestamp (UTC) when the window resets |
+
+**Example Response Headers:**
+```
+RateLimit-Limit: 60
+RateLimit-Remaining: 59
+RateLimit-Reset: 1700000000
+```
+
+### Default Tier Limits (Environment Configurable)
+
+Configure via environment variables in `.env`:
+
+| Variable | Default | Scope |
+|----------|---------|-------|
+| `RATE_LIMIT_ANON` | `60/minute` | Anonymous users (no auth) |
+| `RATE_LIMIT_USER` | `300/minute` | Authenticated JWT users |
+| `RATE_LIMIT_INGEST` | `10/minute` | POST `/api/ingest/record/` |
+| `RATE_LIMIT_GRAPHQL` | `60/minute` | GraphQL endpoint (`/graphql/`) |
+| `RATE_LIMIT_UNAUTHENTICATED_IP` | `30/minute` | IP-based for unauthenticated requests |
+
+### Endpoint-Specific Limits
+
+| Endpoint | Scope | Default |
+|----------|-------|---------|
+| `GET /api/events/` (search) | `events_search` | `30/minute` |
+| `GET /api/contracts/{id}/stats/` | `contract_stats` | `100/minute` |
+| `POST /graphql/` | `graphql` | `60/minute` |
+| `POST /api/ingest/record/` | `ingest` | `10/minute` |
+| `POST /api/admin/db-explain/` | `db_explain` | `10/minute` |
+| `POST /api/webhooks/replay/` | `webhook_replay` | `10/hour` |
+| `POST /api/contracts/bulk-import/` | `contract_bulk_import` | `20/hour` |
+| `POST /api/admin/dedup/test/` | `dedup_test` | `60/hour` |
+
+### API Key Throttling
+
+API keys have per-hour quotas configured per key (default 1000/hour). Contract-level overrides can further reduce quotas for specific contracts.
+
+Headers for API key requests:
+```
+RateLimit-Limit: 1000
+RateLimit-Remaining: 999
+RateLimit-Reset: 1700000000
+```
+
+### 429 Too Many Requests Response
+
+When a rate limit is exceeded, the API returns **HTTP 429** with a JSON error body:
+
+```json
+{
+  "detail": "Request was throttled. Expected available in 45 seconds.",
+  "retry_after": 45
+}
+```
+
+**Handling 429 in Clients:**
+1. Read `Retry-After` header (seconds) or `RateLimit-Reset` (Unix timestamp)
+2. Back off exponentially with jitter
+3. Respect `RateLimit-Remaining: 0` as a signal to pause
+
+### Throttle Priority Order
+
+Throttles are evaluated in this order (first match wins):
+1. **APIKeyThrottle** — API key tier quotas (highest priority)
+2. **DynamicEndpointThrottle** — Endpoint-specific scopes
+3. **IngestRateThrottle** — Ingest endpoint strict limit
+4. **GraphQLRateThrottle** — GraphQL endpoint
+5. **DBExplainThrottle** — Admin DB EXPLAIN
+6. **UnauthenticatedIPRateThrottle** — IP-based for unauthenticated
+7. **AnonRateThrottle** — Anonymous user default
+8. **UserRateThrottle** — Authenticated user default
+
+### Configuration Reference
+
+```env
+# .env rate limit overrides
+RATE_LIMIT_ANON=60/minute
+RATE_LIMIT_USER=300/minute
+RATE_LIMIT_INGEST=10/minute
+RATE_LIMIT_GRAPHQL=60/minute
+ENDPOINT_RATE_LIMIT_SEARCH=30/minute
+ENDPOINT_RATE_LIMIT_STATS=100/minute
+ENDPOINT_RATE_LIMIT_DB_EXPLAIN=10/minute
+RATE_LIMIT_UNAUTHENTICATED_IP=30/minute
+```
+
+### Monitoring Rate Limits
+
+- **Grafana Dashboard**: `RateLimit-*` headers are exported as Prometheus metrics
+- **SlowQueryMiddleware**: Logs requests exceeding 2s with rate limit context
+- **Admin Panel**: API Key quota usage visible at `/admin/ingest/apikey/`
+
+
 ## WebSocket Usage
 
 Connect to a contract's event stream:
