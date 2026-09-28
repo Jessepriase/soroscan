@@ -1,4 +1,5 @@
 import pytest
+import requests
 from stellar_sdk import Keypair, StrKey
 from unittest.mock import MagicMock, patch
 
@@ -205,3 +206,73 @@ class TestSorobanClient:
         result = client.add_indexer(valid_keypair.public_key)
         assert result.success is True
         assert result.tx_hash == "addindexer123"
+
+    @patch("soroscan.ingest.stellar_client.logger")
+    def test_record_event_timeout_exception(self, mock_logger, client, hex_contract_id):
+        """Test that requests.exceptions.Timeout is handled gracefully in record_event."""
+        mock_account = MagicMock()
+        mock_account.sequence = 1
+
+        client.server = MagicMock()
+        client.server.load_account.return_value = mock_account
+        client.server.simulate_transaction.side_effect = requests.exceptions.Timeout("Connection timed out")
+
+        result = client.record_event(
+            target_contract_id=hex_contract_id,
+            event_type="swap",
+            payload_hash_hex="a" * 64,
+        )
+
+        assert result.success is False
+        assert result.status == "error"
+        assert "Connection timed out" in result.error
+        mock_logger.exception.assert_called_once()
+
+    @patch("soroscan.ingest.stellar_client.logger")
+    def test_get_events_range_timeout_exception(self, mock_logger, client, hex_contract_id):
+        """Test that requests.exceptions.Timeout is handled gracefully in get_events_range."""
+        from soroscan.circuit_breaker import execute_with_circuit_breaker
+
+        # Mock the circuit breaker to raise Timeout
+        with patch("soroscan.ingest.stellar_client.execute_with_circuit_breaker") as mock_execute:
+            mock_execute.side_effect = requests.exceptions.Timeout("RPC timeout")
+
+            events = client.get_events_range(
+                contract_id=hex_contract_id,
+                start_ledger=100,
+                end_ledger=200,
+            )
+
+            assert events == []
+            mock_logger.exception.assert_called()
+
+    @patch("soroscan.ingest.stellar_client.logger")
+    def test_get_invocation_timeout_exception(self, mock_logger, client):
+        """Test that requests.exceptions.Timeout is handled gracefully in get_invocation."""
+        from soroscan.circuit_breaker import execute_with_circuit_breaker
+
+        # Mock the circuit breaker to raise Timeout
+        with patch("soroscan.ingest.stellar_client.execute_with_circuit_breaker") as mock_execute:
+            mock_execute.side_effect = requests.exceptions.Timeout("Transaction fetch timeout")
+
+            result = client.get_invocation("tx_hash_123")
+
+            assert result.success is False
+            assert "Transaction fetch timeout" in result.error
+            mock_logger.exception.assert_called()
+
+    @patch("soroscan.ingest.stellar_client.logger")
+    def test_get_contract_state_timeout_exception(self, mock_logger, client, hex_contract_id):
+        """Test that requests.exceptions.Timeout is handled gracefully in get_contract_state."""
+        from soroscan.circuit_breaker import execute_with_circuit_breaker
+
+        # Mock the circuit breaker to raise Timeout
+        with patch("soroscan.ingest.stellar_client.execute_with_circuit_breaker") as mock_execute:
+            mock_execute.side_effect = requests.exceptions.Timeout("Contract state fetch timeout")
+
+            result = client.get_contract_state(hex_contract_id)
+
+            # Should return minimal payload instead of raising
+            assert result["contract_id"] == hex_contract_id
+            assert result["entries"] == {}
+            mock_logger.exception.assert_called()
