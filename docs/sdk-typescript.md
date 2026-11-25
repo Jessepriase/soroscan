@@ -77,6 +77,126 @@ const response = await client.recordTaggedEvent({
 console.log(`Status: ${response.status}, tags: ${response.tags.join(", ")}`);
 ```
 
+### Structured Events (SC-38)
+
+Submit a versioned, deduplicated event. The `correlationId` makes retries safe — the contract rejects a repeated ID without publishing a second event:
+
+```typescript
+const result = await client.recordStructuredEvent({
+  contractId: "CCAAA...",
+  eventType: "escrow",
+  payloadHash: "a".repeat(64),
+  schemaVersion: 1,
+  correlationId: "b".repeat(64), // unique 32-byte hex id
+});
+
+console.log(result.status); // "submitted" | "failed"
+```
+
+### Batch Event Recording (SC-29)
+
+Record up to 25 events in a single transaction:
+
+```typescript
+const result = await client.recordEventsBatch({
+  events: [
+    { contractId: "CCAAA...", eventType: "transfer", payloadHash: "a".repeat(64) },
+    { contractId: "CCAAA...", eventType: "swap",     payloadHash: "b".repeat(64) },
+  ],
+});
+
+console.log("New total:", result.totalEvents);
+```
+
+### Contract Events (SC-16)
+
+Fetch up to `limit` recent events for a specific contract (default 100):
+
+```typescript
+const events = await client.getContractEvents("CCAAA...", 20);
+
+for (const event of events) {
+  console.log(event.ledger, event.type, event.txHash);
+}
+```
+
+### Contract Recent Events (SC-30)
+
+Fetch the newest events for a contract, newest first. The limit is clamped to the server-side maximum of 20:
+
+```typescript
+const recent = await client.getContractRecentEvents("CCAAA...", 10);
+
+for (const event of recent) {
+  console.log(event.ledger, event.type);
+}
+```
+
+### Contract Health (SC-16)
+
+Check the indexing health of a tracked contract:
+
+```typescript
+const health = await client.getContractHealth("CCAAA...");
+
+console.log("Status:", health.status);            // "healthy" | "unhealthy"
+console.log("Failures:", health.consecutiveFailures);
+console.log("Last event:", health.lastEventTime);
+```
+
+### Contract Pause Status (SC-28)
+
+Check whether the SoroScan contract is currently paused:
+
+```typescript
+const status = await client.getContractStatus();
+
+if (status.paused) {
+  console.log("Event recording is paused. Admin:", status.admin);
+} else {
+  console.log("Active. Total events:", status.totalEvents);
+}
+```
+
+### Indexer Authorization (SC-9 / SC-15)
+
+Authorize a new indexer address, check whether an address is a registered indexer, and retrieve the current contract admin:
+
+```typescript
+// Authorize an indexer
+const added = await client.addIndexer({ indexerAddress: "GABC..." });
+console.log(added.status); // "submitted"
+
+// Check registration
+const { is_indexer } = await client.isIndexer("GABC...");
+console.log("Is indexer:", is_indexer);
+
+// Retrieve the admin address
+const { admin_address } = await client.getAdmin();
+console.log("Admin:", admin_address);
+```
+
+### Indexer Statistics (SC-13)
+
+Retrieve how many events a specific indexer has recorded:
+
+```typescript
+const stats = await client.getIndexerStats("GABC...");
+
+console.log("Indexer:", stats.indexer);
+console.log("Events recorded:", stats.eventsRecorded);
+```
+
+### Test Webhook Delivery
+
+Trigger a test delivery to verify a webhook endpoint is reachable:
+
+```typescript
+const result = await client.testWebhook("wh_001");
+
+console.log(result.status); // "test_webhook_queued"
+```
+
 ## Features
 
 
