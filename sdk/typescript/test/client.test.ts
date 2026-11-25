@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { SoroScanClient, SoroScanError, DEFAULT_USER_AGENT } from "../src/client.js";
+import {
+  SoroScanClient,
+  SoroScanError,
+  SoroScanNotFoundError,
+  DEFAULT_USER_AGENT,
+} from "../src/client.js";
 import { EventQueryBuilder } from "../src/builder.js";
 import type {
   GetEventsResponse,
@@ -207,7 +212,7 @@ describe("User-Agent header", () => {
     await makeClient().getEvents();
 
     expect(DEFAULT_USER_AGENT).toBe("SoroScan-TS-SDK/1.4.0");
-    expect(sentHeaders()["User-Agent"]).toBe("SoroScan-TS-SDK/1.4.0");
+    expect(sentHeaders()["User-Agent"]).toBe(DEFAULT_USER_AGENT);
   });
 
   it("uses a custom userAgent when provided", async () => {
@@ -470,18 +475,72 @@ describe("deleteWebhook()", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// testWebhook() — #1671
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("testWebhook()", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("sends POST to /api/webhooks/{id}/test/ and returns status", async () => {
+    mockFetch({ status: "test_webhook_queued" });
+    const result = await makeClient("key").testWebhook("wh_001");
+
+    expect(result.status).toBe("test_webhook_queued");
+
+    const [url, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe(`${BASE_URL}/api/webhooks/wh_001/test/`);
+    expect(init.method).toBe("POST");
+  });
+
+  it("URL-encodes the webhook ID", async () => {
+    mockFetch({ status: "test_webhook_queued" });
+    await makeClient("key").testWebhook("wh/special id");
+
+    const [url] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(url).toContain(encodeURIComponent("wh/special id"));
+  });
+
+  it("includes the Authorization header", async () => {
+    mockFetch({ status: "test_webhook_queued" });
+    await makeClient("my-key").testWebhook("wh_001");
+
+    const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [
+      string,
+      RequestInit,
+    ];
+    expect((init.headers as Record<string, string>)["Authorization"]).toBe(
+      "Bearer my-key",
+    );
+  });
+
+  it("propagates API errors as SoroScanError", async () => {
+    mockFetch({ code: "NOT_FOUND", message: "Webhook not found" }, 404);
+    await expect(makeClient("key").testWebhook("missing_id")).rejects.toMatchObject({
+      statusCode: 404,
+      code: "NOT_FOUND",
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Error handling
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Error handling", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("throws SoroScanError on 404", async () => {
+  it("throws SoroScanNotFoundError on 404", async () => {
     mockFetch({ code: "NOT_FOUND", message: "Contract not found" }, 404);
-    await expect(
-      makeClient().getContract({ contractId: "CBAD" })
-    ).rejects.toMatchObject({
-      name: "SoroScanError",
+    const error = await makeClient()
+      .getContract({ contractId: "CBAD" })
+      .catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(SoroScanError);
+    expect(error).toBeInstanceOf(SoroScanNotFoundError);
+    expect(error).toMatchObject({
       statusCode: 404,
       code: "NOT_FOUND",
       message: "Contract not found",

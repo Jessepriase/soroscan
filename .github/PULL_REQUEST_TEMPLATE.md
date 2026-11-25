@@ -21,9 +21,10 @@ Closes #
 <!-- Drag images here or delete this section for non-UI changes. -->
 
 ## Checklist
+
 - [ ] `ruff` / `black` (Python), ESLint / Prettier (TS), `cargo fmt` + `clippy` (Rust) all pass
 - [ ] Tests pass locally (`pytest` / `pnpm test` / `cargo test`)
 - [ ] Documentation updated (if applicable)
 - [ ] Conventional Commit message format used
-- [ ] PR is opened against `develop`, not `main`
+- [ ] PR targets the `dev` integration branch
 - [ ] No secrets, credentials, or `.env` files included

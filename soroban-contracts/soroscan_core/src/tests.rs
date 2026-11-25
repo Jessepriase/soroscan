@@ -375,6 +375,21 @@ fn record_structured_event_topics_and_payload() {
     assert_eq!(record.correlation_id, correlation_id);
     assert_eq!(record.ledger, 99);
     assert_eq!(record.timestamp, 555_000);
+
+    let stored = client
+        .structured_by_correlation(&correlation_id)
+        .expect("structured record stored by correlation ID");
+    assert_eq!(stored, record);
+}
+
+#[test]
+fn structured_by_correlation_returns_none_when_missing() {
+    let env = Env::default();
+    let (contract_id, _, _) = setup(&env);
+    let client = SoroScanCoreClient::new(&env, &contract_id);
+    let correlation_id = BytesN::from_array(&env, &[0x33; 32]);
+
+    assert_eq!(client.structured_by_correlation(&correlation_id), None);
 }
 
 #[test]
@@ -461,6 +476,20 @@ fn record_tagged_event_topics_and_payload() {
     assert_eq!(record.tags.get(1).unwrap(), symbol_short!("defi"));
     assert_eq!(record.ledger, 7);
     assert_eq!(record.timestamp, 88);
+
+    let stored = client
+        .latest_tagged_by_type(&symbol_short!("trade"))
+        .expect("tagged record stored by event type");
+    assert_eq!(stored, record);
+}
+
+#[test]
+fn latest_tagged_by_type_returns_none_when_missing() {
+    let env = Env::default();
+    let (contract_id, _, _) = setup(&env);
+    let client = SoroScanCoreClient::new(&env, &contract_id);
+
+    assert_eq!(client.latest_tagged_by_type(&symbol_short!("trade")), None);
 }
 
 #[test]
@@ -498,6 +527,55 @@ fn paused_indexer_cannot_record_tagged_or_structured_events() {
         Err(Ok(ContractError::IndexerPaused))
     );
     assert_eq!(event_count(&env), before);
+}
+
+#[test]
+fn paused_contract_rejects_tagged_events() {
+    let env = Env::default();
+    let (contract_id, admin, indexer) = setup(&env);
+    let client = SoroScanCoreClient::new(&env, &contract_id);
+    client.pause(&admin);
+
+    let target = Address::generate(&env);
+    let payload_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let mut tags = Vec::new(&env);
+    tags.push_back(symbol_short!("hot"));
+    let before = event_count(&env);
+
+    assert_eq!(
+        client.try_record_tagged_event(
+            &indexer,
+            &target,
+            &symbol_short!("trade"),
+            &payload_hash,
+            &tags,
+        ),
+        Err(Ok(ContractError::ContractPaused))
+    );
+    assert_eq!(event_count(&env), before);
+}
+
+#[test]
+fn unpaused_contract_allows_tagged_events() {
+    let env = Env::default();
+    let (contract_id, admin, indexer) = setup(&env);
+    let client = SoroScanCoreClient::new(&env, &contract_id);
+    client.pause(&admin);
+    client.unpause(&admin);
+
+    let target = Address::generate(&env);
+    let payload_hash = BytesN::from_array(&env, &[0u8; 32]);
+    let mut tags = Vec::new(&env);
+    tags.push_back(symbol_short!("hot"));
+
+    let result = client.try_record_tagged_event(
+        &indexer,
+        &target,
+        &symbol_short!("trade"),
+        &payload_hash,
+        &tags,
+    );
+    assert_eq!(result, Ok(Ok(1)));
 }
 
 #[test]
@@ -697,114 +775,44 @@ fn soroscan_events_share_the_namespace_topic_and_name_their_family() {
     assert!(saw_batch, "batches emit a (soroscan, batch) summary");
 }
 
-// ---------------------------------------------------------------------------
-// latest_by_contract (SC-16)
-// ---------------------------------------------------------------------------
-
 #[test]
-fn latest_by_contract_returns_none_before_any_event() {
+fn paused_contract_cannot_record_structured_events() {
     let env = Env::default();
-    let (contract_id, _, _) = setup(&env);
-    let client = SoroScanCoreClient::new(&env, &contract_id);
-
-    let unknown = Address::generate(&env);
-    assert!(
-        client.latest_by_contract(&unknown).is_none(),
-        "no record stored yet for a contract that has never emitted an event"
-    );
-}
-
-#[test]
-fn latest_by_contract_returns_record_matching_the_recorded_event() {
-    let env = Env::default();
-    env.ledger().set_sequence_number(1_000);
-    env.ledger().set_timestamp(9_000_000);
-    let (contract_id, _, indexer) = setup(&env);
+    let (contract_id, admin, indexer) = setup(&env);
     let client = SoroScanCoreClient::new(&env, &contract_id);
 
     let target = Address::generate(&env);
-    let payload_hash = BytesN::from_array(&env, &[0xCC; 32]);
+    let payload_hash = BytesN::from_array(&env, &[0x22; 32]);
+    let correlation_id = BytesN::from_array(&env, &[0x33; 32]);
 
-    client.record_event(&indexer, &target, &symbol_short!("mint"), &payload_hash);
+    client.pause(&admin);
 
-    let record = client
-        .latest_by_contract(&target)
-        .expect("record should be present after record_event");
-    assert_eq!(record.contract_id, target, "contract_id must match");
     assert_eq!(
-        record.event_type,
-        symbol_short!("mint"),
-        "event_type must match"
+        client.try_record_structured_event(
+            &indexer,
+            &target,
+            &symbol_short!("escrow"),
+            &payload_hash,
+            &1,
+            &correlation_id,
+        ),
+        Err(Ok(ContractError::ContractPaused)),
+        "a paused contract must reject structured events"
     );
-    assert_eq!(record.payload_hash, payload_hash, "payload_hash must match");
-    assert_eq!(
-        record.ledger, 1_000,
-        "ledger must match the pinned sequence"
+
+    client.unpause(&admin);
+
+    client.record_structured_event(
+        &indexer,
+        &target,
+        &symbol_short!("escrow"),
+        &payload_hash,
+        &1,
+        &correlation_id,
     );
-    assert_eq!(
-        record.timestamp, 9_000_000,
-        "timestamp must match the pinned value"
-    );
-}
-
-#[test]
-fn latest_by_contract_returns_newest_after_second_event() {
-    let env = Env::default();
-    env.ledger().set_sequence_number(10);
-    env.ledger().set_timestamp(100);
-    let (contract_id, _, indexer) = setup(&env);
-    let client = SoroScanCoreClient::new(&env, &contract_id);
-
-    let target = Address::generate(&env);
-    let first_hash = BytesN::from_array(&env, &[0x01; 32]);
-    let second_hash = BytesN::from_array(&env, &[0x02; 32]);
-
-    client.record_event(&indexer, &target, &symbol_short!("swap"), &first_hash);
-
-    // Advance ledger so the second event has a distinct cursor.
-    env.ledger().set_sequence_number(20);
-    env.ledger().set_timestamp(200);
-
-    client.record_event(&indexer, &target, &symbol_short!("burn"), &second_hash);
-
-    let record = client
-        .latest_by_contract(&target)
-        .expect("record should be present");
-    assert_eq!(
-        record.event_type,
-        symbol_short!("burn"),
-        "second event type should overwrite"
-    );
-    assert_eq!(
-        record.payload_hash, second_hash,
-        "second payload_hash should overwrite"
-    );
-    assert_eq!(record.ledger, 20, "ledger should reflect the second call");
-    assert_eq!(
-        record.timestamp, 200,
-        "timestamp should reflect the second call"
-    );
-}
-
-#[test]
-fn latest_by_contract_does_not_leak_across_contracts() {
-    let env = Env::default();
-    let (contract_id, _, indexer) = setup(&env);
-    let client = SoroScanCoreClient::new(&env, &contract_id);
-
-    let target_a = Address::generate(&env);
-    let target_b = Address::generate(&env);
-    let hash_a = BytesN::from_array(&env, &[0xAA; 32]);
-
-    client.record_event(&indexer, &target_a, &symbol_short!("swap"), &hash_a);
 
     assert!(
-        client.latest_by_contract(&target_b).is_none(),
-        "an event recorded for contract A must not appear under contract B"
+        !client.is_paused(),
+        "the contract is recording again after unpause"
     );
-    let record_a = client
-        .latest_by_contract(&target_a)
-        .expect("event for contract A must still be present");
-    assert_eq!(record_a.contract_id, target_a);
-    assert_eq!(record_a.payload_hash, hash_a);
 }

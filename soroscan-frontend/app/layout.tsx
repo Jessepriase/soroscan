@@ -7,7 +7,6 @@ import { Providers } from "./providers"
 import { SkipToContent } from "@/components/ui/SkipToContent"
 import { locales, defaultLocale } from "@/lib/locales"
 import { WebVitalsReporter } from "@/components/WebVitalsReporter"
-import CookieConsentBanner from "@/components/compliance/CookieConsentBanner"
 
 const inter = Inter({
   variable: "--font-inter",
@@ -108,7 +107,7 @@ export default async function RootLayout({
         <WebVitalsReporter />
         <NextIntlClientProvider locale={locale} messages={messages}>
           <Providers>
-            <main id="main-content">
+            <main id="main-content" tabIndex={-1} className="focus:outline-none">
               {children}
             </main>
           </Providers>

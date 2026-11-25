@@ -21,13 +21,11 @@ import {
   AlertTriangle, 
   Pause, 
   XCircle, 
-  Activity,
-  Zap
+  Activity
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { 
-  useStatusAnimation, 
-  ANIMATION_PRESETS,
+  useStatusAnimation,
   type AnimationType,
   type AnimationContext 
 } from "@/lib/status-animations";
@@ -230,11 +228,19 @@ const ContractHealthBadge = React.forwardRef<HTMLSpanElement, ContractHealthBadg
       ? status 
       : "static";
     
-    const animation = useStatusAnimation(
+    const { elementRef, animationClasses, animationStyles } = useStatusAnimation(
       disableAnimation ? "static" : animationType,
       "normal",
       animationContext
     );
+    const setBadgeRef = React.useCallback((node: HTMLSpanElement | null) => {
+      elementRef.current = node;
+      if (typeof ref === "function") {
+        ref(node);
+      } else if (ref) {
+        ref.current = node;
+      }
+    }, [elementRef, ref]);
 
     // Tooltip content setup
     const tooltipState = useDegradedStatusTooltip(
@@ -279,19 +285,19 @@ const ContractHealthBadge = React.forwardRef<HTMLSpanElement, ContractHealthBadg
     // Combine animation styles with dot styles
     const dotStyles: React.CSSProperties = {
       backgroundColor: config.colors.primary,
-      ...animation.animationStyles
+      ...animationStyles
     };
 
     const badgeContent = (
       <span
-        ref={animation.elementRef}
+        ref={setBadgeRef}
         role="status"
         aria-label={accessibleLabel}
         tabIndex={hasTooltip ? 0 : undefined}
         className={cn(
           healthBadgeVariants({ variant, size, glow }),
           STATUS_BACKGROUND_CLASSES[status as ContractHealthStatus] || STATUS_BACKGROUND_CLASSES.error,
-          animation.animationClasses,
+          animationClasses,
           className
         )}
         style={dynamicStyles}
@@ -303,7 +309,7 @@ const ContractHealthBadge = React.forwardRef<HTMLSpanElement, ContractHealthBadg
             aria-hidden="true"
             className={cn(
               statusDotVariants({ size }),
-              animation.animationClasses
+              animationClasses
             )}
             style={dotStyles}
           />

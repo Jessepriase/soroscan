@@ -3,6 +3,7 @@
 import React, { Suspense, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { setTokens } from '@/lib/auth';
+import { hardNavigate } from '@/lib/navigation';
 import { Button } from '@/components/terminal/Button';
 import {
   ValidatedInput,
@@ -26,9 +27,11 @@ function LoginPageInner() {
 
   const completeLogin = (access: string, refresh: string) => {
     setTokens({ access, refresh });
-    // Replace keeps history clean and reduces redirect race in E2E flows.
-    router.replace(callbackUrl);
-    router.refresh();
+    if (typeof window !== 'undefined') {
+      hardNavigate(callbackUrl);
+    } else {
+      router.replace(callbackUrl);
+    }
   };
 
   const onSubmit = async (event: React.FormEvent) => {

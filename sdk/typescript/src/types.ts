@@ -15,7 +15,7 @@ export interface SoroScanClientConfig {
   initialDelayMs?: number;
   /** Maximum full-jitter backoff ceiling in milliseconds (default: 10_000) */
   maxDelayMs?: number;
-  /** User-Agent header sent with every request (default: "SoroScan-TS-SDK/1.4.0") */
+  /** User-Agent header sent with every request (default: DEFAULT_USER_AGENT). */
   userAgent?: string;
 }
 
@@ -213,6 +213,14 @@ export interface GetContractParams {
   contractId: ContractId;
 }
 
+/** Event type summary returned by the SC-17 contract event-types endpoint. */
+export interface ContractEventTypeInfo {
+  event_type: EventType;
+  count: number;
+  first_seen: ISODateString;
+  last_seen: ISODateString;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Transactions
 // ─────────────────────────────────────────────────────────────────────────────
@@ -391,6 +399,21 @@ export interface WebhookListResponse {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SC-17: Contract event type info
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ContractEventTypeInfo {
+  /** Event type name */
+  eventType: string;
+  /** Number of events of this type */
+  count: number;
+  /** ISO timestamp of first occurrence */
+  firstSeen: string;
+  /** ISO timestamp of last occurrence */
+  lastSeen: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SC-16: Contract health
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -411,6 +434,28 @@ export interface ContractHealth {
   errorMessage: string;
   /** When health was last checked */
   checkedAt: string | null;
+}
+
+/**
+ * Aggregate statistics for a contract (SC-42).
+ *
+ * Mirrors the Python SDK `ContractStats` model and the response of
+ * `GET /api/ingest/contracts/{id}/stats/`. The `{id}` in that path is the
+ * contract's database id, while `contractId` below is its Stellar address.
+ */
+export interface ContractStats {
+  /** Stellar contract address */
+  contractId: string;
+  /** Human-readable contract name */
+  name: string;
+  /** Total number of indexed events */
+  totalEvents: number;
+  /** Number of distinct event types */
+  uniqueEventTypes: number;
+  /** Highest indexed ledger number, or null when no events exist */
+  latestLedger: number | null;
+  /** Timestamp of the most recent event, or null when no events exist */
+  lastActivity: ISODateString | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

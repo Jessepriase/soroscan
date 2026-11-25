@@ -27,9 +27,42 @@ from .models import (
     TrackedContract,
     WebhookSubscription,
 )
+from .services.event_dedup import ALLOWED_DEDUP_FIELDS
 
 _CONTRACT_ID_RE = re.compile(r"^C[A-Z2-7]{55}$")
+_STELLAR_ADDRESS_RE = re.compile(r"^[GC][A-Z2-7]{55}$")
+_SHA256_HEX_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 _VALID_NETWORKS = {choice[0] for choice in TrackedContract.Network.choices}
+
+try:  # pragma: no cover - import path depends on installed extras
+    from stellar_sdk import StrKey as _StellarStrKey
+except Exception:  # pragma: no cover
+    _StellarStrKey = None
+
+
+def _is_valid_contract_address(value):
+    if _StellarStrKey is not None:
+        try:
+            return bool(_StellarStrKey.is_valid_contract(value))
+        except Exception:
+            return False
+    return bool(_CONTRACT_ID_RE.fullmatch(value))
+
+
+def _is_valid_stellar_address(value):
+    if _StellarStrKey is not None:
+        for validator in (
+            _StellarStrKey.is_valid_ed25519_public_key,
+            _StellarStrKey.is_valid_contract,
+        ):
+            try:
+                if validator(value):
+                    return True
+            except Exception:
+                continue
+        return False
+    return bool(_STELLAR_ADDRESS_RE.fullmatch(value))
+
 
 _FILTER_CONDITION_LOGICAL_OPS = {"and", "or"}
 _FILTER_CONDITION_COMPARISON_OPS = {
@@ -470,6 +503,9 @@ class WebhookSubscriptionSerializer(serializers.ModelSerializer):
             "delivery_sla_seconds",
             "escalation_policy",
             "filter_condition",
+            "timeout_seconds",
+            "retry_backoff_strategy",
+            "retry_backoff_seconds",
             "created_at",
             "last_triggered",
             "failure_count",
@@ -485,6 +521,36 @@ class WebhookSubscriptionSerializer(serializers.ModelSerializer):
         if not isinstance(value, dict):
             raise serializers.ValidationError("filter_condition must be an object.")
         _validate_filter_condition_node(value)
+        return value
+
+    def validate_timeout_seconds(self, value):
+        if value is None:
+            return value
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise serializers.ValidationError("timeout_seconds must be an integer.")
+        if value < 1 or value > 60:
+            raise serializers.ValidationError("timeout_seconds must be between 1 and 60.")
+        return value
+
+    def validate_retry_backoff_strategy(self, value):
+        if value in (None, ""):
+            return value
+        allowed = {"exponential", "linear", "fixed"}
+        if value not in allowed:
+            raise serializers.ValidationError(
+                "retry_backoff_strategy must be one of: exponential, linear, fixed."
+            )
+        return value
+
+    def validate_retry_backoff_seconds(self, value):
+        if value is None:
+            return value
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise serializers.ValidationError("retry_backoff_seconds must be an integer.")
+        if value < 1 or value > 3600:
+            raise serializers.ValidationError(
+                "retry_backoff_seconds must be between 1 and 3600."
+            )
         return value
 
     def validate(self, attrs):
@@ -618,6 +684,16 @@ class RecordEventRequestSerializer(serializers.Serializer):
         help_text="SHA-256 hash of payload (hex)",
     )
 
+    def validate_contract_id(self, value):
+        if not _is_valid_contract_address(value):
+            raise serializers.ValidationError("Must be a valid Soroban contract address.")
+        return value
+
+    def validate_payload_hash(self, value):
+        if not _SHA256_HEX_RE.fullmatch(value):
+            raise serializers.ValidationError("Must be exactly 64 hexadecimal characters.")
+        return value.lower()
+
 
 class AddIndexerRequestSerializer(serializers.Serializer):
     """Serializer for SC-9: authorize an indexer on the SoroScan contract."""
@@ -626,6 +702,11 @@ class AddIndexerRequestSerializer(serializers.Serializer):
         max_length=56,
         help_text="Stellar address of the indexer to authorize",
     )
+
+    def validate_indexer_address(self, value):
+        if not _is_valid_stellar_address(value):
+            raise serializers.ValidationError("Must be a valid Stellar account or contract address.")
+        return value
 
 
 class StructuredEventRequestSerializer(RecordEventRequestSerializer):
@@ -637,6 +718,11 @@ class StructuredEventRequestSerializer(RecordEventRequestSerializer):
         min_length=64,
         help_text="64-character hexadecimal id used to deduplicate retries",
     )
+
+    def validate_correlation_id(self, value):
+        if not _SHA256_HEX_RE.fullmatch(value):
+            raise serializers.ValidationError("Must be exactly 64 hexadecimal characters.")
+        return value.lower()
 
 
 class APIKeySerializer(serializers.ModelSerializer):
@@ -657,7 +743,7 @@ class APIKeySerializer(serializers.ModelSerializer):
             "last_used_at",
             "created_at",
         ]
-        read_only_fields = ["id", "key", "quota_per_hour", "last_used_at", "created_at"]
+        read_only_fields = ["id", "key", "is_active", "quota_per_hour", "last_used_at", "created_at"]
         extra_kwargs = {
             "key": {"read_only": True},
         }
@@ -866,9 +952,14 @@ class EventDeduplicationConfigSerializer(serializers.Serializer):
         for item in value:
             name = str(item).strip()
             if not name:
-                continue
+                raise serializers.ValidationError("Deduplication field cannot be blank.")
             if len(name) > 128:
                 raise serializers.ValidationError(f"Field name too long: {name}")
+            if name not in ALLOWED_DEDUP_FIELDS:
+                raise serializers.ValidationError(
+                    f"Unknown deduplication field '{name}'. Allowed fields: "
+                    f"{', '.join(ALLOWED_DEDUP_FIELDS)}"
+                )
             cleaned.append(name)
         return cleaned
 

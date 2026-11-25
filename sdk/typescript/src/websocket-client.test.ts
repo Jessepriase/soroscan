@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import type { ContractEvent } from "./types";
-import { WebSocketClient } from "./websocket-client";
+import type { ContractEvent } from "./types.js";
+import { WebSocketClient } from "./websocket-client.js";
 
 // Mock WebSocket
 class MockWebSocket {
@@ -13,10 +13,14 @@ class MockWebSocket {
   public static CLOSING = 2;
   public static CLOSED = 3;
 
+  /** Every instance created, so tests can drive the socket the client uses. */
+  public static instances: MockWebSocket[] = [];
+
   public readyState = MockWebSocket.CONNECTING;
   private listeners: Record<string, Function[]> = {};
 
   constructor(public url: string) {
+    MockWebSocket.instances.push(this);
     // Simulate async connection
     setTimeout(() => {
       this.readyState = MockWebSocket.OPEN;
@@ -46,7 +50,7 @@ class MockWebSocket {
     this.dispatchEvent("close", null);
   }
 
-  private dispatchEvent(event: string, data: any) {
+  protected dispatchEvent(event: string, data: any) {
     if (this.listeners[event]) {
       this.listeners[event].forEach((callback) => {
         callback(data instanceof Event ? data : { data });
@@ -55,7 +59,9 @@ class MockWebSocket {
   }
 
   simulateMessage(data: string) {
-    this.dispatchEvent("message", { data });
+    // dispatchEvent wraps non-Event values as `{ data }`, which is exactly the
+    // shape a real WebSocket `message` event exposes to the listener.
+    this.dispatchEvent("message", data);
   }
 
   simulateError(error: string) {
@@ -72,11 +78,11 @@ class MockWebSocket {
 const originalWebSocket = global.WebSocket;
 
 describe("WebSocketClient", () => {
-  let mockWs: MockWebSocket;
   let client: WebSocketClient;
 
   beforeEach(() => {
     // Mock WebSocket globally
+    MockWebSocket.instances.length = 0;
     global.WebSocket = MockWebSocket as any;
 
     client = new WebSocketClient({
@@ -132,45 +138,39 @@ describe("WebSocketClient", () => {
   });
 
   describe("Event Listeners", () => {
+    const makeEvent = (contractId: string, id = "event-1"): ContractEvent => ({
+      id,
+      ledger: 100,
+      ledgerClosedAt: "2024-01-01T00:00:00Z",
+      txHash: "hash123",
+      contractId,
+      type: "transfer",
+      topics: [{ type: "address", value: "addr1" }],
+      value: { amount: "100" },
+      inSuccessfulContractCall: true,
+      pagingToken: "token123",
+    });
+
+    /** The socket instance created by the most recent `client.connect()`. */
+    const connectedSocket = (): MockWebSocket => {
+      const socket = MockWebSocket.instances[MockWebSocket.instances.length - 1];
+      expect(socket).toBeDefined();
+      return socket!;
+    };
+
     it("should register and emit events to listener", async () => {
       const eventCallback = vi.fn();
-      const mockEvent: ContractEvent = {
-        id: "event-1",
-        ledger: 100,
-        ledgerClosedAt: "2024-01-01T00:00:00Z",
-        txHash: "hash123",
-        contractId: "C1234567890",
-        type: "transfer",
-        topics: [{ type: "address", value: "addr1" }],
-        value: { amount: "100" },
-        inSuccessfulContractCall: true,
-        pagingToken: "token123",
-      };
+      const mockEvent = makeEvent("C1234567890");
 
       client.on(eventCallback);
       await client.connect();
 
-      // Simulate receiving message
-      const mockWebSocketInstance = (global.WebSocket as any).prototype;
-      mockWs = new MockWebSocket("wss://api.example.com");
-      mockWs.simulateMessage(
-        JSON.stringify({
-          type: "event",
-          data: mockEvent,
-        })
+      connectedSocket().simulateMessage(
+        JSON.stringify({ type: "event", data: mockEvent })
       );
 
-      // Manually trigger event through client
-      const listeners: any[] = [];
-      const originalOn = client.on.bind(client);
-      client.on = (callback, filter) => {
-        listeners.push({ callback, filter });
-        originalOn(callback, filter);
-      };
-
-      // Re-register and simulate
-      client.on(eventCallback);
-      // Note: In real scenario, this would be triggered by WebSocket message
+      expect(eventCallback).toHaveBeenCalledTimes(1);
+      expect(eventCallback).toHaveBeenCalledWith(mockEvent);
     });
 
     it("should filter events by contractId", async () => {
@@ -179,19 +179,48 @@ describe("WebSocketClient", () => {
 
       client.on(callback1, { contractId: "C1111111111" });
       client.on(callback2, { contractId: "C2222222222" });
+      await client.connect();
 
-      // This test validates the filtering logic structure
-      expect(client.getBufferSize()).toBe(0);
+      const matching = makeEvent("C1111111111");
+      connectedSocket().simulateMessage(
+        JSON.stringify({ type: "event", data: matching })
+      );
+
+      expect(callback1).toHaveBeenCalledTimes(1);
+      expect(callback1).toHaveBeenCalledWith(matching);
+      expect(callback2).not.toHaveBeenCalled();
+
+      // A message for the other listener reaches only that listener.
+      const other = makeEvent("C2222222222", "event-2");
+      connectedSocket().simulateMessage(
+        JSON.stringify({ type: "event", data: other })
+      );
+
+      expect(callback1).toHaveBeenCalledTimes(1);
+      expect(callback2).toHaveBeenCalledTimes(1);
+      expect(callback2).toHaveBeenCalledWith(other);
     });
 
     it("should unsubscribe listeners", async () => {
       const callback = vi.fn();
       client.on(callback);
+      await client.connect();
+
+      const socket = connectedSocket();
+      socket.simulateMessage(
+        JSON.stringify({ type: "event", data: makeEvent("C1234567890") })
+      );
+      expect(callback).toHaveBeenCalledTimes(1);
 
       client.off(callback);
 
-      // Buffer should be empty after unsubscribe
-      expect(client.getBufferSize()).toBe(0);
+      socket.simulateMessage(
+        JSON.stringify({
+          type: "event",
+          data: makeEvent("C1234567890", "event-2"),
+        })
+      );
+      expect(callback).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -244,19 +273,25 @@ describe("WebSocketClient", () => {
 
   describe("Message Buffering", () => {
     it("should buffer messages when disconnected", async () => {
-      // Implementation: subscribe throws if not connected
-      // This is the intended behavior - messages are buffered internally during reconnection
-      // but user code must subscribe after connection is established
-      expect(() => {
-        client.subscribe({ contractId: "C1234567890" });
-      }).toThrow("not connected");
+      // With the new implementation, subscribe/unsubscribe no longer throw
+      // but buffer messages internally when disconnected
+      client.subscribe({ contractId: "C1234567890" });
+      client.unsubscribe();
+
+      // Buffer should have messages
+      expect(client.getBufferSize()).toBeGreaterThan(0);
     });
 
     it("should flush buffer on reconnection", async () => {
+      // Buffer some messages while disconnected
+      client.subscribe({ contractId: "C1234567890" });
+      const bufferedSize = client.getBufferSize();
+      expect(bufferedSize).toBeGreaterThan(0);
+
       await client.connect();
       expect(client.isConnected()).toBe(true);
 
-      // In real scenario, messages would be buffered and flushed
+      // Buffer should be flushed
       expect(client.getBufferSize()).toBe(0);
     });
 
@@ -266,8 +301,18 @@ describe("WebSocketClient", () => {
         maxBufferSize: 5,
       });
 
+      // Add more messages than buffer size
+      for (let i = 0; i < 10; i++) {
+        smallClient.send({ type: "test", id: i });
+      }
+
       // Buffer should be limited to max size
-      expect(smallClient.getBufferSize()).toBe(0);
+      expect(smallClient.getBufferSize()).toBe(5);
+    });
+
+    it("should provide public send method for custom messages", async () => {
+      client.send({ type: "custom", data: "test" });
+      expect(client.getBufferSize()).toBeGreaterThan(0);
     });
   });
 
@@ -319,7 +364,7 @@ describe("WebSocketClient", () => {
       const sendSpy = vi.fn();
 
       global.WebSocket = class extends MockWebSocket {
-        send(data: string) {
+        override send(data: string) {
           sendSpy(data);
         }
       } as any;
@@ -337,17 +382,17 @@ describe("WebSocketClient", () => {
       );
     });
 
-    it("should throw when subscribing while disconnected", async () => {
-      expect(() => {
-        client.subscribe();
-      }).toThrow("not connected");
+    it("should buffer when subscribing while disconnected", async () => {
+      // New implementation: buffers instead of throwing
+      client.subscribe();
+      expect(client.getBufferSize()).toBeGreaterThan(0);
     });
 
     it("should send unsubscribe message", async () => {
       const sendSpy = vi.fn();
 
       global.WebSocket = class extends MockWebSocket {
-        send(data: string) {
+        override send(data: string) {
           sendSpy(data);
         }
       } as any;

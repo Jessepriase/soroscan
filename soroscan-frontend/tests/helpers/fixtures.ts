@@ -329,7 +329,11 @@ export async function seedAuth(page: Page) {
 }
 
 export async function clearAuth(page: Page) {
+  // Clear once per tab: init scripts re-run on every navigation, which would
+  // otherwise wipe tokens set by a login flow before the next page loads.
   await page.addInitScript(() => {
+    if (window.sessionStorage.getItem("__e2e_auth_cleared")) return;
+    window.sessionStorage.setItem("__e2e_auth_cleared", "1");
     window.localStorage.removeItem("access_token");
     window.localStorage.removeItem("refresh_token");
   });
@@ -338,9 +342,10 @@ export async function clearAuth(page: Page) {
 /**
  * Visual regression helper.
  * - Chromium only (Firefox still runs functional coverage).
- * - Locally compares against committed baselines.
- * - In CI, attaches a full-page screenshot without failing on missing
- *   linux baselines (win32 baselines are committed for local runs).
+ * - Compares against the committed baseline for the current platform
+ *   (`*-chromium-linux.png` in CI, `*-chromium-win32.png` locally on Windows).
+ * - Regenerate baselines with `pnpm run test:e2e:update-snapshots` in the same
+ *   environment as the target baselines (see tests/README.md).
  */
 export async function expectVisualSnapshot(
   page: Page,
@@ -348,12 +353,6 @@ export async function expectVisualSnapshot(
   testInfo: import("@playwright/test").TestInfo,
 ) {
   testInfo.skip(testInfo.project.name !== "chromium", "Visual baselines are Chromium-only");
-
-  if (process.env.CI) {
-    const shot = await page.screenshot({ fullPage: true, animations: "disabled" });
-    await testInfo.attach(name, { body: shot, contentType: "image/png" });
-    return;
-  }
 
   await expect(page).toHaveScreenshot(name, { fullPage: true });
 }

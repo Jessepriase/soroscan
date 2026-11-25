@@ -1,6 +1,8 @@
 """
 Test settings for SoroScan project.
 """
+import os
+import tempfile
 from datetime import timedelta
 from pathlib import Path
 
@@ -48,6 +50,7 @@ MIDDLEWARE = [
     "soroscan.middleware.PlatformVersionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "soroscan.middleware_gzip.CustomGZipMiddleware",
+    "soroscan.middleware.CacheBustingMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
@@ -85,12 +88,24 @@ CHANNEL_LAYERS = {
 }
 
 # Database - use in-memory SQLite for tests
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": ":memory:",
+# Use the database named by TEST_DATABASE_URL (e.g. the Postgres service in CI)
+# so Postgres-only behaviour (statement timeouts, migration rollbacks, indexes)
+# is exercised; fall back to in-memory SQLite for fast local runs.
+_test_db_url = os.environ.get("TEST_DATABASE_URL")
+if _test_db_url:
+    import environ
+
+    DATABASES = {"default": environ.Env.db_url_config(_test_db_url)}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": ":memory:",
+        }
     }
-}
+
+# Keep uploaded files created by tests out of the source tree.
+MEDIA_ROOT = tempfile.mkdtemp(prefix="soroscan-test-media-")
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = []
@@ -124,6 +139,7 @@ REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "soroscan.exceptions.custom_exception_handler",
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "soroscan.authentication.APIKeyAuthentication",
     ],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 50,
@@ -145,8 +161,12 @@ REST_FRAMEWORK = {
         "dedup_test": "1000/hour",
         "events_search": "1000/hour",
         "contract_stats": "1000/hour",
+        "db_explain": "100/minute",
+        "unauthenticated_ip": "1000/hour",
     },
 }
+
+DATABASE_STATEMENT_TIMEOUT = 5000
 
 
 

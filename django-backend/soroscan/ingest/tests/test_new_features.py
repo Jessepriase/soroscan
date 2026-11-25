@@ -338,12 +338,14 @@ class APIKeyThrottleTests(TestCase):
 
     def test_reject_invalid_key(self):
         from soroscan.throttles import APIKeyThrottle
+        from rest_framework.exceptions import AuthenticationFailed
 
         throttle = APIKeyThrottle()
         factory = APIRequestFactory()
         request = factory.get("/api/ingest/events/", HTTP_AUTHORIZATION="ApiKey BADKEY")
         request.user = self.user
-        self.assertFalse(throttle.allow_request(request, MagicMock()))
+        with self.assertRaises(AuthenticationFailed):
+            throttle.allow_request(request, MagicMock())
 
     def test_allow_valid_key(self):
         from soroscan.throttles import APIKeyThrottle
@@ -450,7 +452,7 @@ class SlowQueryMiddlewareTests(TestCase):
         def get_response(req):
             # Inside the wrapper, doing an actual query
             with connection.cursor() as cursor:
-                cursor.execute("SELECT 1 FROM sqlite_master WHERE name = %s", ["test"])
+                cursor.execute("SELECT 1 WHERE 'slow_query_probe' = %s", ["test"])
             return {}
             
         mw = SlowQueryMiddleware(get_response)

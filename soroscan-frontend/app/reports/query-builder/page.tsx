@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { EmptyState } from "@/components/ui/empty-state";
+import { readStoredArray as readStoredArrayLib } from "@/lib/safe-storage";
 
 interface EventRow {
   contractId: string;
@@ -62,26 +64,52 @@ function downloadBlob(content: string, fileName: string, mime: string): void {
   URL.revokeObjectURL(url);
 }
 
+function isSavedReport(value: unknown): value is SavedReport {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.id === "string" &&
+    typeof candidate.name === "string" &&
+    typeof candidate.createdAt === "string" &&
+    Array.isArray(candidate.columns)
+  );
+}
+
+function isScheduledReport(value: unknown): value is ScheduledReport {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.id === "string" &&
+    typeof candidate.reportName === "string" &&
+    typeof candidate.createdAt === "string"
+  );
+}
+
 export default function QueryBuilderReportPage() {
   const [contractFilter, setContractFilter] = useState("");
   const [eventTypeFilter, setEventTypeFilter] = useState("");
   const [columns, setColumns] = useState<Array<keyof EventRow>>(selectableColumns);
   const [rowLimit, setRowLimit] = useState(1000);
   const [reportName, setReportName] = useState("");
-  const [savedReports, setSavedReports] = useState<SavedReport[]>(() => {
-    if (typeof window === "undefined") return [];
-    const saved = localStorage.getItem("savedReports");
-    return saved ? (JSON.parse(saved) as SavedReport[]) : [];
-  });
-  const [scheduledReports, setScheduledReports] = useState<ScheduledReport[]>(() => {
-    if (typeof window === "undefined") return [];
-    const scheduled = localStorage.getItem("scheduledReports");
-    return scheduled ? (JSON.parse(scheduled) as ScheduledReport[]) : [];
-  });
+  const [savedReports, setSavedReports] = useState<SavedReport[]>(() =>
+    readStoredArrayLib("savedReports", isSavedReport),
+  );
+  const [scheduledReports, setScheduledReports] = useState<ScheduledReport[]>(() =>
+    readStoredArrayLib("scheduledReports", isScheduledReport),
+  );
   const [showScheduleForm, setShowScheduleForm] = useState(false);
   const [scheduleEmail, setScheduleEmail] = useState("");
   const [scheduleFrequency, setScheduleFrequency] = useState<"daily" | "weekly">("daily");
   const [scheduleTime, setScheduleTime] = useState("09:00");
+  const [queryError, setQueryError] = useState<string | null>(null);
+  const [isQueryRunning] = useState(false);
+
+  const resetFilters = () => {
+    setContractFilter("");
+    setEventTypeFilter("");
+    setRowLimit(1000);
+    setQueryError(null);
+  };
 
   const rows = useMemo(() => {
     const filtered = sourceRows.filter((row) => {
@@ -274,27 +302,69 @@ export default function QueryBuilderReportPage() {
         </section>
 
         {/* Data Preview Table */}
-        <section className="rounded border border-terminal-green/20 overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-terminal-green/5">
-              <tr>
-                {columns.map((column) => (
-                  <th key={column} className="px-3 py-2 text-left">{column}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.txHash} className="border-t border-terminal-green/10 hover:bg-terminal-green/5">
+        <section
+          className="rounded border border-terminal-green/20 overflow-hidden"
+          data-testid="query-builder-results"
+        >
+          {isQueryRunning ? (
+            <div
+              role="status"
+              aria-label="Running query"
+              className="p-12 text-center text-sm text-terminal-gray animate-pulse font-terminal-mono"
+            >
+              Running query…
+            </div>
+          ) : queryError ? (
+            <div
+              role="alert"
+              className="p-8 text-center space-y-3 font-terminal-mono"
+              data-testid="query-builder-error"
+            >
+              <p className="text-sm text-terminal-danger font-semibold">
+                Query execution failed
+              </p>
+              <p className="text-xs text-terminal-gray max-w-md mx-auto">{queryError}</p>
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="rounded border border-terminal-danger/40 px-3 py-1.5 text-xs text-terminal-danger hover:bg-terminal-danger/10"
+              >
+                Reset filters
+              </button>
+            </div>
+          ) : rows.length === 0 ? (
+            <EmptyState
+              variant="terminal"
+              title="No matching query results"
+              description="Your query completed successfully, but returned no matching records. Adjust your filter criteria or reset filters to view all events."
+              action={{
+                label: "Reset filters",
+                onClick: resetFilters,
+                terminalVariant: "primary",
+              }}
+            />
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="bg-terminal-green/5">
+                <tr>
                   {columns.map((column) => (
-                    <td key={`${row.txHash}-${column}`} className="px-3 py-2">
-                      {String(row[column])}
-                    </td>
+                    <th key={column} className="px-3 py-2 text-left">{column}</th>
                   ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.txHash} className="border-t border-terminal-green/10 hover:bg-terminal-green/5">
+                    {columns.map((column) => (
+                      <td key={`${row.txHash}-${column}`} className="px-3 py-2">
+                        {String(row[column])}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </section>
 
         {/* Save Report Section */}

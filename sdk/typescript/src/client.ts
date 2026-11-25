@@ -8,6 +8,8 @@ import type {
   GetEventsByContractsResponse,
   RecordStructuredEventParams,
   RecordStructuredEventResponse,
+  RecordTaggedEventParams,
+  RecordTaggedEventResponse,
   GetContractsParams,
   GetContractsResponse,
   GetContractParams,
@@ -27,6 +29,7 @@ import type {
   RecordEventsBatchResponse,
   IndexerStats,
   ContractStatus,
+  ContractStats,
   AddIndexerParams,
   AddIndexerResponse,
   GetAdminResponse,
@@ -57,6 +60,7 @@ import {
   mapApiError,
   SoroScanTimeoutError,
   SoroScanConnectionError,
+  SoroScanValidationError,
 } from "./errors.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -75,9 +79,13 @@ function toQueryString(params: Record<string, unknown>): string {
 // Client
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Default User-Agent sent with every SDK request. */
+export const DEFAULT_USER_AGENT = "SoroScan-TS-SDK/1.4.0";
+
 export class SoroScanClient {
   readonly #baseUrl: string;
   readonly #apiKey: string | undefined;
+  readonly #userAgent: string;
   readonly #timeoutMs: number;
   readonly #maxRetries: number;
   readonly #initialDelayMs: number;
@@ -89,6 +97,7 @@ export class SoroScanClient {
     }
     this.#baseUrl = config.baseUrl.replace(/\/$/, "");
     this.#apiKey = config.apiKey;
+    this.#userAgent = config.userAgent ?? DEFAULT_USER_AGENT;
     this.#timeoutMs = config.timeoutMs ?? 30_000;
     this.#maxRetries = Math.max(0, Math.trunc(config.maxRetries ?? 3));
     this.#initialDelayMs = Math.max(0, config.initialDelayMs ?? 250);
@@ -111,6 +120,7 @@ export class SoroScanClient {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       Accept: "application/json",
+      "User-Agent": this.#userAgent,
     };
     if (this.#apiKey) {
       headers["Authorization"] = `Bearer ${this.#apiKey}`;
@@ -329,6 +339,91 @@ export class SoroScanClient {
   }
 
   /**
+   * Get the most recent events for a specific contract, newest first (SC-30).
+   *
+   * `limit` must be between 1 and `MAX_RECENT_EVENTS_LIMIT` (20). An
+   * out-of-range value is rejected before any request is sent.
+   *
+   * @example
+   * const events = await client.getContractRecentEvents('CCAAA...', 20);
+   * for (const event of events) {
+   *   console.log(event.event_type, event.timestamp);
+   * }
+   */
+  async getContractRecentEvents(
+    contractId: string,
+    limit: number = 10
+  ): Promise<import("./types.js").ContractEvent[]> {
+    if (!Number.isFinite(limit) || limit < 1 || limit > MAX_RECENT_EVENTS_LIMIT) {
+      throw new SoroScanValidationError(
+        `getContractRecentEvents: limit must be between 1 and ${MAX_RECENT_EVENTS_LIMIT}`,
+        "validation_error",
+        { field: "limit", value: limit },
+        "limit",
+        limit
+      );
+    }
+    const safeLimit = Math.trunc(limit);
+    return this.#request<import("./types.js").ContractEvent[]>(
+      "GET",
+      `/api/ingest/contracts/${encodeURIComponent(contractId)}/recent-events/`,
+      { query: { limit: safeLimit } }
+    );
+  }
+
+  /**
+   * Get aggregate statistics for a contract (SC-42).
+   *
+   * The backend `stats` action is keyed by the contract's database id (not its
+   * Stellar address), so `contractId` here is the database id. The returned
+   * `ContractStats.contractId` is the Stellar address reported by the API.
+   *
+   * @example
+   * const stats = await client.getContractStats('42');
+   * console.log(stats.totalEvents, stats.latestLedger);
+   */
+  async getContractStats(contractId: string): Promise<ContractStats> {
+    const raw = await this.#request<{
+      contract_id?: unknown;
+      name?: unknown;
+      total_events?: unknown;
+      unique_event_types?: unknown;
+      latest_ledger?: unknown;
+      last_activity?: unknown;
+    }>(
+      "GET",
+      `/api/ingest/contracts/${encodeURIComponent(contractId)}/stats/`
+    );
+
+    if (
+      !raw ||
+      typeof raw.contract_id !== "string" ||
+      typeof raw.name !== "string" ||
+      typeof raw.total_events !== "number" ||
+      typeof raw.unique_event_types !== "number"
+    ) {
+      throw new SoroScanValidationError(
+        "SoroScanClient: invalid contract stats response",
+        "invalid_response"
+      );
+    }
+
+    const latestLedger =
+      typeof raw.latest_ledger === "number" ? raw.latest_ledger : null;
+    const lastActivity =
+      typeof raw.last_activity === "string" ? raw.last_activity : null;
+
+    return {
+      contractId: raw.contract_id,
+      name: raw.name,
+      totalEvents: raw.total_events,
+      uniqueEventTypes: raw.unique_event_types,
+      latestLedger,
+      lastActivity,
+    };
+  }
+
+  /**
    * Get health status for a tracked contract (SC-16).
    *
    * @example
@@ -344,35 +439,6 @@ export class SoroScanClient {
   }
 
   // ─── Transactions ──────────────────────────────────────────────────────────
-
-  /**
-   * Submit an SC-38 structured event. The correlation ID makes retry handling
-   * explicit: the contract rejects a repeated ID without publishing twice.
-   */
-  async recordStructuredEvent(
-    params: RecordStructuredEventParams
-  ): Promise<RecordStructuredEventResponse> {
-    const response = await this.#request<{
-      status: "submitted" | "failed";
-      tx_hash?: string;
-      transaction_status: string;
-      error?: string;
-    }>("POST", "/api/record/structured/", {
-      body: {
-        contract_id: params.contractId,
-        event_type: params.eventType,
-        payload_hash: params.payloadHash,
-        schema_version: params.schemaVersion,
-        correlation_id: params.correlationId,
-      },
-    });
-    return {
-      status: response.status,
-      txHash: response.tx_hash,
-      transactionStatus: response.transaction_status,
-      error: response.error,
-    };
-  }
 
   /**
    * Submit an SC-24 tagged event.
@@ -598,6 +664,24 @@ export class SoroScanClient {
     return this.#request<void>(
       "DELETE",
       `/v1/webhooks/${encodeURIComponent(webhookId)}`
+    );
+  }
+
+  /**
+   * Trigger a test delivery for an existing webhook subscription.
+   *
+   * The backend sends a synthetic test event to the webhook's target URL and
+   * returns immediately. The response status string mirrors the Python SDK
+   * (`"test_webhook_queued"`).
+   *
+   * @example
+   * const result = await client.testWebhook("wh_001");
+   * console.log(result.status); // "test_webhook_queued"
+   */
+  async testWebhook(webhookId: string): Promise<{ status: string }> {
+    return this.#request<{ status: string }>(
+      "POST",
+      `/api/webhooks/${encodeURIComponent(webhookId)}/test/`
     );
   }
 }

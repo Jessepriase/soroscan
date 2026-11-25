@@ -14,14 +14,11 @@ import {
   Settings,
   Shield,
   Building2,
-  Sun,
-  Moon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Drawer } from "@/components/ui/drawer";
 import { HamburgerToggle } from "@/components/ui/hamburger-toggle";
 import { OrganizationSwitcher } from "@/components/organization/OrganizationSwitcher";
-import { useTheme } from "@/hooks/useTheme";
 
 const navItems = [
   { href: "/dashboard", label: "Events", icon: LayoutDashboard },
@@ -115,7 +112,6 @@ function SidebarNav({
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
-  const { theme, toggleTheme, mounted } = useTheme();
 
   React.useEffect(() => {
     setSidebarOpen(false);
@@ -123,14 +119,6 @@ export function AppShell({ children }: AppShellProps) {
 
   return (
     <div className="min-h-screen bg-terminal-black text-terminal-green font-terminal-mono transition-colors duration-200">
-      {/* Skip to main content link for screen reader and keyboard accessibility */}
-      <a
-        href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:px-4 focus:py-2 focus:bg-terminal-green focus:text-terminal-black focus:font-bold focus:rounded focus:outline-none focus:ring-2 focus:ring-terminal-cyan"
-      >
-        Skip to main content
-      </a>
-
       {/* Top header */}
       <header className="sticky top-0 z-30 flex h-[60px] items-center gap-3 border-b border-terminal-green/20 bg-terminal-black/95 backdrop-blur-md px-4">
         <HamburgerToggle
@@ -205,10 +193,9 @@ export function AppShell({ children }: AppShellProps) {
           />
         </Drawer>
 
-        {/* Main content */}
-        <main id="main-content" tabIndex={-1} className="flex-1 min-w-0 focus:outline-none">
+        <div className="flex-1 min-w-0">
           {children}
-        </main>
+        </div>
       </div>
     </div>
   );
